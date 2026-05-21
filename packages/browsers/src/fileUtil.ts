@@ -192,25 +192,68 @@ async function extractZip(
   folderPath: string,
 ): Promise<void> {
   try {
-    if (process.platform === 'win32') {
+    let command: string;
+
+    function verifyCommand(command: string, args: string[]) {
+      const result = spawnSync(command, args);
+      const exists = !result.error && result.status == 0;
+      if (exists) debugFileUtil?.(`Using ${command} to unzip ${archivePath}`);
+      return exists;
+    }
+
+    // Use built-in 'unzip' on non-Windows machines
+    if (process.platform !== 'win32') {
+      command = "unzip";
+      if (!verifyCommand(command, ["-v"])) {
+        throw new Error(`Extraction failed: Required native binary ('unzip') was not found in the system PATH.`);
+      }
+
+      // -o: overwrite existing files without prompting
+      // -d: extract files into the specified directory
+      await execFileAsync(command, ['-o', archivePath, '-d', folderPath]);
+      return;
+    }
+
+    const systemRoot =
+      process.env['SystemRoot'] ?? process.env['SYSTEMROOT'] ?? 'C:\\Windows';
+    
+    // BSD Tar (Windows 10 and later, Windows Server 2019 and later)
+    command = `${systemRoot}\\System32\\tar.exe`;
+    if (verifyCommand(command, ["--version"])) {
       // -x: extract files
       // -f: specify the archive file
       // -C: extract to the specified directory
-      const systemRoot =
-        process.env['SystemRoot'] ?? process.env['SYSTEMROOT'] ?? 'C:\\Windows';
-      const systemTar = `${systemRoot}\\System32\\tar.exe`;
-      await execFileAsync(systemTar, ['-xf', archivePath, '-C', folderPath]);
-    } else {
-      // -o: overwrite existing files without prompting
-      // -d: extract files into the specified directory
-      await execFileAsync('unzip', ['-o', archivePath, '-d', folderPath]);
+      await execFileAsync(command, ['-xf', archivePath, '-C', folderPath]);
+      return;
     }
+
+    const PowerShellArgs = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '& { Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force }',
+      archivePath,
+      folderPath,
+    ];
+
+    // PowerShell 7
+    command = "pwsh.exe";
+    if (verifyCommand(command, ["-Version"])) {
+      await execFileAsync(command, PowerShellArgs);
+      return;
+    }
+
+    // Original PowerShell (likely v5.1)
+    command = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    if (verifyCommand(command, ["-?"])) {
+      await execFileAsync(command, PowerShellArgs);
+      return;
+    }
+
+    throw new Error(
+      `Extraction failed: Neither 'tar.exe' nor PowerShell was found to unzip the file.`,
+    );
   } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      throw new Error(
-        `Extraction failed: Required native binary ('tar.exe' or 'unzip') was not found in the system PATH.`,
-      );
-    }
     throw new Error(
       `Extraction failed: ${error?.stderr?.toString() || error?.message}`,
     );

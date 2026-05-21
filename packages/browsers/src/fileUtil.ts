@@ -198,8 +198,24 @@ async function extractZip(
       // -C: extract to the specified directory
       const systemRoot =
         process.env['SystemRoot'] ?? process.env['SYSTEMROOT'] ?? 'C:\\Windows';
-      const systemTar = `${systemRoot}\\System32\\tar.exe`;
-      await execFileAsync(systemTar, ['-xf', archivePath, '-C', folderPath]);
+      try {
+        const systemPowerShell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+        // Try PowerShell first
+        await execFileAsync(systemPowerShell, [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '& { Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force }',
+          archivePath,
+          folderPath,
+        ]);
+      } catch {
+        // -x: extract files
+        // -f: specify the archive file
+        // -C: extract to the specified directory
+        const systemTar = `${systemRoot}\\System32\\tar.exe`;
+        await execFileAsync(systemTar, ['-xf', archivePath, '-C', folderPath]);
+      }
     } else {
       // -o: overwrite existing files without prompting
       // -d: extract files into the specified directory
